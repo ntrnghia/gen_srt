@@ -1,0 +1,11 @@
+# Temp/generated
+_srt_tmp/
+*.mp3
+*.wav
+*.mp4
+*.srt
+
+# Python
+__pycache__/
+*.pyc
+.env
