@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,8 @@ STT_MODEL = "x-ai/grok-stt-1.0"
 TRANSLATE_MODEL = "deepseek/deepseek-v4-flash-0731"
 TRANSLATE_PROVIDER: dict[str, Any] = {"order": ["DeepSeek"]}
 GAP_THRESHOLD = 0.4
+SILENCE_THRESHOLD = -13.0  # dB — speech is ~-10dB, background music ~-15dB+
+SILENCE_MIN_DUR = 0.5      # seconds — minimum "silence" duration to detect
 MAX_WORKERS = 16
 TRANSLATE_BATCH = 30
 
@@ -117,14 +120,49 @@ def _parse_words(raw_words: list[dict[str, Any]]) -> list[Word]:
     return out
 
 
-def transcribe_chunk(idx: int, path: str) -> tuple[list[Segment], float]:
+def strip_leading_silence(path: str, tmp_dir: str) -> tuple[str, float]:
+    """Strip leading non-speech audio from *path*.
+
+    Returns (trimmed_audio_path, offset_seconds). If no leading silence is found,
+    returns the original path with offset 0.
+    """
+    r = subprocess.run(
+        [
+            "ffmpeg", "-i", path, "-af",
+            f"silencedetect=noise={SILENCE_THRESHOLD}dB:d={SILENCE_MIN_DUR}",
+            "-f", "null", "-",
+        ],
+        capture_output=True, text=True,
+    )
+    # Find the first silence_end — that's where speech begins
+    for line in r.stderr.splitlines():
+        m = re.search(r"silence_end:\s*([\d.]+)", line)
+        if m:
+            offset = float(m.group(1))
+            if offset < 0.1:
+                continue  # negligible trim
+            trimmed = os.path.join(tmp_dir, "trimmed_" + os.path.basename(path))
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", path, "-ss", str(offset),
+                    "-ac", "1", "-ar", str(SAMPLE_RATE),
+                    "-c:a", "libmp3lame", "-b:a", BITRATE, trimmed,
+                ],
+                capture_output=True, check=True,
+            )
+            return trimmed, offset
+    return path, 0.0
+
+
+def transcribe_chunk(idx: int, path: str, tmp_dir: str) -> tuple[list[Segment], float]:
     for attempt in range(1, 5):
         try:
-            with open(path, "rb") as f:
+            audio_path, offset = strip_leading_silence(path, tmp_dir)
+            with open(audio_path, "rb") as f:
                 r = requests.post(
                     STT_API,
                     headers={"Authorization": f"Bearer {KEY}"},
-                    files={"file": (os.path.basename(path), f, "audio/mpeg")},
+                    files={"file": (os.path.basename(audio_path), f, "audio/mpeg")},
                     data={
                         "model": STT_MODEL,
                         "response_format": "verbose_json",
@@ -134,7 +172,8 @@ def transcribe_chunk(idx: int, path: str) -> tuple[list[Segment], float]:
                 )
             r.raise_for_status()
             d: dict[str, Any] = r.json()
-            words = _parse_words(d.get("words", []))
+            words = [Word(w.word, w.start + offset, w.end + offset)
+                     for w in _parse_words(d.get("words", []))]
             usage = cast(dict[str, Any], d.get("usage", {}))
             return segment_words(words), float(usage.get("cost", 0.0))
         except Exception as e:  # noqa: BLE001
@@ -227,7 +266,7 @@ def main() -> None:
     total_stt = 0.0
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futs = {
-            pool.submit(transcribe_chunk, i, os.path.join(tmp_dir, c)): i
+            pool.submit(transcribe_chunk, i, os.path.join(tmp_dir, c), tmp_dir): i
             for i, c in enumerate(chunks)
         }
         for fut in as_completed(futs):
