@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate a Vietnamese .srt subtitle file from a video via OpenRouter.
 
-Single-pass transcription with x-ai/grok-stt-1.0 (word timestamps), segmented
-by silence gaps, translated to Vietnamese via deepseek/deepseek-v4-flash.
+Single-pass transcription with fish-audio/transcribe-1 (word timestamps),
+segmented by start-to-start gaps, translated to Vietnamese via deepseek.
 
 Usage: gen_srt.py <video_path>
 Output: <video_path>.srt in the same folder as the video.
