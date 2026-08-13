@@ -26,10 +26,10 @@ CHUNK_SEC = 120
 SAMPLE_RATE = 16000
 BITRATE = "32k"
 
-STT_MODEL = "x-ai/grok-stt-1.0"
+STT_MODEL = "fish-audio/transcribe-1"
 TRANSLATE_MODEL = "deepseek/deepseek-v4-flash-0731"
 TRANSLATE_PROVIDER: dict[str, Any] = {"order": ["DeepSeek"]}
-GAP_THRESHOLD = 0.4
+GAP_THRESHOLD = 0.8
 SILENCE_THRESHOLD = -13.0  # dB — speech is ~-10dB, background music ~-15dB+
 SILENCE_MIN_DUR = 0.5      # seconds — minimum "silence" duration to detect
 MAX_WORKERS = 16
@@ -125,6 +125,9 @@ def strip_leading_silence(path: str, tmp_dir: str) -> tuple[str, float]:
 
     Returns (trimmed_audio_path, offset_seconds). If no leading silence is found,
     returns the original path with offset 0.
+
+    Only trims silence that starts at the very beginning of the file (≥3s), so
+    trailing or mid-chunk silence is never mistaken for leading silence.
     """
     r = subprocess.run(
         [
@@ -134,13 +137,19 @@ def strip_leading_silence(path: str, tmp_dir: str) -> tuple[str, float]:
         ],
         capture_output=True, text=True,
     )
-    # Find the first silence_end — that's where speech begins
+    # Leading silence: silence_start at ~0, followed by silence_end (speech begins).
+    # Track the first silence_start; only trim if it's at the file's beginning.
+    first_start: float | None = None
     for line in r.stderr.splitlines():
+        m = re.search(r"silence_start:\s*([\d.]+)", line)
+        if m and first_start is None:
+            first_start = float(m.group(1))
+            continue
         m = re.search(r"silence_end:\s*([\d.]+)", line)
-        if m:
+        if m and first_start is not None and first_start < 0.5:
             offset = float(m.group(1))
-            if offset < 0.1:
-                continue  # negligible trim
+            if offset < 3.0:
+                return path, 0.0  # leading silence too short to bother
             trimmed = os.path.join(tmp_dir, "trimmed_" + os.path.basename(path))
             subprocess.run(
                 [
@@ -150,14 +159,18 @@ def strip_leading_silence(path: str, tmp_dir: str) -> tuple[str, float]:
                 ],
                 capture_output=True, check=True,
             )
-            return trimmed, offset
+            # Sanity: if trim produced a tiny/invalid file, fall back to original
+            if os.path.getsize(trimmed) > 1000:
+                return trimmed, offset
+            os.remove(trimmed)
+            return path, 0.0
     return path, 0.0
 
 
 def transcribe_chunk(idx: int, path: str, tmp_dir: str) -> tuple[list[Segment], float]:
     for attempt in range(1, 5):
         try:
-            audio_path, offset = strip_leading_silence(path, tmp_dir)
+            audio_path, offset = path, 0.0  # strip_leading_silence(path, tmp_dir)
             with open(audio_path, "rb") as f:
                 r = requests.post(
                     STT_API,
