@@ -1,13 +1,13 @@
 # gen_srt
 
-Generate Vietnamese `.srt` subtitle files from Chinese-language video files using [OpenRouter](https://openrouter.ai) APIs.
+Generate Vietnamese `.srt` subtitle files from video files in any language using [OpenRouter](https://openrouter.ai) APIs. Source language is auto-detected.
 
 ## How it works
 
 1. **Extract & split audio** — ffmpeg extracts mono 16 kHz audio, split into 120-second MP3 chunks
-2. **Transcribe** — `fish-audio/transcribe-1` transcribes each chunk with per-character word timestamps (parallel, 16 workers)
+2. **Transcribe** — `fish-audio/transcribe-1` transcribes each chunk with per-character word timestamps, auto-detecting the source language (parallel, 16 workers)
 3. **Segment** — words grouped into subtitle segments by start-to-start gap threshold (0.8s)
-4. **Translate** — `deepseek/deepseek-v4-flash-0731` translates Chinese text to Vietnamese in batches of 30 (parallel, 16 workers)
+4. **Translate** — `deepseek/deepseek-v4-flash-0731` auto-detects source language and translates to Vietnamese in batches of 30 (parallel, 16 workers)
 5. **Write SRT** — timestamps from transcription, text from translation
 
 ## Usage

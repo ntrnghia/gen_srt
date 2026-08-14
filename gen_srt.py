@@ -3,6 +3,7 @@
 
 Single-pass transcription with fish-audio/transcribe-1 (word timestamps),
 segmented by start-to-start gaps, translated to Vietnamese via deepseek.
+Source language is auto-detected for both transcription and translation.
 
 Usage: gen_srt.py <video_path>
 Output: <video_path>.srt in the same folder as the video.
@@ -218,13 +219,14 @@ def translate_batch(texts: list[str]) -> tuple[list[str], float]:
                         {
                             "role": "system",
                             "content": (
-                                "You translate Chinese subtitle lines to Vietnamese. "
+                                "You translate subtitle lines to Vietnamese. "
+                                "Auto-detect the source language of each line. "
                                 "Each key in the input JSON is a SEPARATE subtitle line. "
                                 "Translate each one INDEPENDENTLY. Do NOT merge lines. "
                                 "Return a JSON object with the SAME keys, each mapped to "
                                 "its Vietnamese translation.\n"
-                                'Example input: {"0": "你好", "1": "世界"}\n'
-                                'Example output: {"0": "Xin chào", "1": "thế giới"}'
+                                'Example input: {"0": "你好", "1": "Hello"}\n'
+                                'Example output: {"0": "Xin chào", "1": "Xin chào"}'
                             ),
                         },
                         {"role": "user", "content": json.dumps(src, ensure_ascii=False)},
