@@ -33,7 +33,7 @@ TRANSLATE_PROVIDER: dict[str, Any] = {"order": ["DeepSeek"]}
 GAP_THRESHOLD = 0.8
 SILENCE_THRESHOLD = -13.0  # dB — speech is ~-10dB, background music ~-15dB+
 SILENCE_MIN_DUR = 0.5      # seconds — minimum "silence" duration to detect
-MAX_WORKERS = 16
+MAX_WORKERS = 8
 TRANSLATE_BATCH = 30
 
 KEY = os.environ["OPENROUTER_API_KEY"]
@@ -169,7 +169,7 @@ def strip_leading_silence(path: str, tmp_dir: str) -> tuple[str, float]:
 
 
 def transcribe_chunk(idx: int, path: str, tmp_dir: str) -> tuple[list[Segment], float]:
-    for attempt in range(1, 5):
+    for attempt in range(1, 9):
         try:
             audio_path, offset = path, 0.0  # strip_leading_silence(path, tmp_dir)
             with open(audio_path, "rb") as f:
@@ -191,8 +191,9 @@ def transcribe_chunk(idx: int, path: str, tmp_dir: str) -> tuple[list[Segment], 
             usage = cast(dict[str, Any], d.get("usage", {}))
             return segment_words(words), float(usage.get("cost", 0.0))
         except Exception as e:  # noqa: BLE001
-            print(f"    [{idx}] attempt {attempt}: {e!r}", flush=True)
-            time.sleep(3 * attempt)
+            wait = min(2 ** attempt, 60)  # 2, 4, 8, 16, 32, 60, 60, 60
+            print(f"    [{idx}] attempt {attempt}/8: {e!r}  retry in {wait}s", flush=True)
+            time.sleep(wait)
     raise RuntimeError(f"transcription failed for chunk {idx}")
 
 
@@ -202,7 +203,7 @@ def translate_batch(texts: list[str]) -> tuple[list[str], float]:
     remaining: dict[int, str] = dict(enumerate(texts))
     result: dict[int, str] = {}
     total_cost = 0.0
-    for _ in range(4):
+    for retry in range(6):
         if not remaining:
             break
         src = {str(i): t for i, t in remaining.items()}
@@ -246,8 +247,9 @@ def translate_batch(texts: list[str]) -> tuple[list[str], float]:
                     result[i] = v.strip()
                     del remaining[i]
         except Exception as e:  # noqa: BLE001
-            print(f"    translate: {e!r}", flush=True)
-            time.sleep(3)
+            wait = min(2 ** retry, 60)
+            print(f"    translate: {e!r}  retry in {wait}s", flush=True)
+            time.sleep(wait)
     for i, t in remaining.items():
         result[i] = t
     return [result[i] for i in range(len(texts))], total_cost
