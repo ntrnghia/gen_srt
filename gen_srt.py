@@ -25,7 +25,6 @@ import requests
 # ── Config ──────────────────────────────────────────────────────────────────
 CHUNK_SEC = 120
 SAMPLE_RATE = 16000
-BITRATE = "32k"
 
 STT_MODEL = "fish-audio/transcribe-1"
 TRANSLATE_MODEL = "deepseek/deepseek-v4-flash-0731"
@@ -33,7 +32,7 @@ TRANSLATE_PROVIDER: dict[str, Any] = {"order": ["DeepSeek"]}
 GAP_THRESHOLD = 0.8
 SILENCE_THRESHOLD = -13.0  # dB — speech is ~-10dB, background music ~-15dB+
 SILENCE_MIN_DUR = 0.5      # seconds — minimum "silence" duration to detect
-MAX_WORKERS = 8
+MAX_WORKERS = 16
 TRANSLATE_BATCH = 30
 
 KEY = os.environ["OPENROUTER_API_KEY"]
@@ -64,11 +63,11 @@ def fmt_ts(s: float) -> str:
 
 
 def extract_and_split(video: str, tmp_dir: str) -> list[str]:
-    """Extract audio from *video*, split into CHUNK_SEC mp3 files in *tmp_dir*."""
+    """Extract audio from *video*, split into CHUNK_SEC wav files in *tmp_dir*."""
     if os.path.isdir(tmp_dir):
         existing = sorted(
             f for f in os.listdir(tmp_dir)
-            if f.startswith("chunk_") and f.endswith(".mp3")
+            if f.startswith("chunk_") and f.endswith(".wav")
         )
         if existing:
             print(f"  reusing {len(existing)} existing chunks", flush=True)
@@ -78,15 +77,15 @@ def extract_and_split(video: str, tmp_dir: str) -> list[str]:
     subprocess.run(
         [
             "ffmpeg", "-y", "-i", video, "-vn", "-ac", "1",
-            "-ar", str(SAMPLE_RATE), "-c:a", "libmp3lame", "-b:a", BITRATE,
+            "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le",
             "-f", "segment", "-segment_time", str(CHUNK_SEC),
-            os.path.join(tmp_dir, "chunk_%03d.mp3"),
+            os.path.join(tmp_dir, "chunk_%03d.wav"),
         ],
         check=True,
     )
     return sorted(
         f for f in os.listdir(tmp_dir)
-        if f.startswith("chunk_") and f.endswith(".mp3")
+        if f.startswith("chunk_") and f.endswith(".wav")
     )
 
 
@@ -156,7 +155,7 @@ def strip_leading_silence(path: str, tmp_dir: str) -> tuple[str, float]:
                 [
                     "ffmpeg", "-y", "-i", path, "-ss", str(offset),
                     "-ac", "1", "-ar", str(SAMPLE_RATE),
-                    "-c:a", "libmp3lame", "-b:a", BITRATE, trimmed,
+                    "-c:a", "pcm_s16le", trimmed,
                 ],
                 capture_output=True, check=True,
             )
@@ -169,20 +168,13 @@ def strip_leading_silence(path: str, tmp_dir: str) -> tuple[str, float]:
 
 
 def transcribe_chunk(idx: int, path: str, tmp_dir: str) -> tuple[list[Segment], float]:
-    # Convert to WAV — fish-audio intermittently 503s on MP3 but accepts WAV reliably
-    wav = os.path.join(tmp_dir, "wav_" + os.path.basename(path).replace(".mp3", ".wav"))
-    if not os.path.exists(wav):
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", path, "-ac", "1", "-ar", str(SAMPLE_RATE), wav],
-            capture_output=True, check=True,
-        )
     for attempt in range(1, 9):
         try:
-            with open(wav, "rb") as f:
+            with open(path, "rb") as f:
                 r = requests.post(
                     STT_API,
                     headers={"Authorization": f"Bearer {KEY}"},
-                    files={"file": (os.path.basename(wav), f, "audio/wav")},
+                    files={"file": (os.path.basename(path), f, "audio/wav")},
                     data={
                         "model": STT_MODEL,
                         "response_format": "verbose_json",
