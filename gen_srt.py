@@ -33,7 +33,7 @@ TRANSLATE_PROVIDER: dict[str, Any] = {"order": ["DeepSeek"]}
 GAP_THRESHOLD = 0.8
 SILENCE_THRESHOLD = -13.0  # dB — speech is ~-10dB, background music ~-15dB+
 SILENCE_MIN_DUR = 0.5      # seconds — minimum "silence" duration to detect
-MAX_WORKERS = 16
+MAX_WORKERS = 8
 TRANSLATE_BATCH = 30
 
 KEY = os.environ["OPENROUTER_API_KEY"]
@@ -171,11 +171,23 @@ def strip_leading_silence(path: str, tmp_dir: str) -> tuple[str, float]:
 def transcribe_chunk(idx: int, path: str, tmp_dir: str) -> tuple[list[Segment], float]:
     for attempt in range(1, 9):
         try:
-            with open(path, "rb") as f:
+            # On retry 3+, trim start — fish-audio 503s on certain audio at chunk start
+            if attempt >= 3:
+                trim = (attempt - 2) * 2  # 2, 4, 6, 8, 10, 12s
+                trimmed = os.path.join(tmp_dir, f"trim_{trim}_{os.path.basename(path)}")
+                if not os.path.exists(trimmed):
+                    subprocess.run(
+                        ["ffmpeg", "-y", "-i", path, "-ss", str(trim), "-c:a", "pcm_s16le", trimmed],
+                        capture_output=True, check=True,
+                    )
+                send_path = trimmed
+            else:
+                send_path = path
+            with open(send_path, "rb") as f:
                 r = requests.post(
                     STT_API,
                     headers={"Authorization": f"Bearer {KEY}"},
-                    files={"file": (os.path.basename(path), f, "audio/wav")},
+                    files={"file": (os.path.basename(send_path), f, "audio/wav")},
                     data={
                         "model": STT_MODEL,
                         "response_format": "verbose_json",
