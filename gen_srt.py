@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -188,8 +189,8 @@ def transcribe_chunk(idx: int, path: str, tmp_dir: str) -> tuple[list[Segment], 
             usage = cast(dict[str, Any], d.get("usage", {}))
             return segment_words(words), float(usage.get("cost", 0.0))
         except Exception as e:  # noqa: BLE001
-            wait = min(2 ** attempt, 60)  # 2, 4, 8, 16, 32, 60, 60, 60
-            print(f"    [{idx}] attempt {attempt}/8: {e!r}  retry in {wait}s", flush=True)
+            wait = min(2 ** attempt, 60) + random.uniform(0, 2 ** attempt)
+            print(f"    [{idx}] attempt {attempt}/8: {e!r}  retry in {wait:.0f}s", flush=True)
             time.sleep(wait)
     raise RuntimeError(f"transcription failed for chunk {idx}")
 
@@ -244,8 +245,8 @@ def translate_batch(texts: list[str]) -> tuple[list[str], float]:
                     result[i] = v.strip()
                     del remaining[i]
         except Exception as e:  # noqa: BLE001
-            wait = min(2 ** retry, 60)
-            print(f"    translate: {e!r}  retry in {wait}s", flush=True)
+            wait = min(2 ** retry, 60) + random.uniform(0, 2 ** retry)
+            print(f"    translate: {e!r}  retry in {wait:.0f}s", flush=True)
             time.sleep(wait)
     for i, t in remaining.items():
         result[i] = t
