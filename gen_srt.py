@@ -172,11 +172,21 @@ def transcribe_chunk(idx: int, path: str, tmp_dir: str) -> tuple[list[Segment], 
     for attempt in range(1, 9):
         try:
             audio_path, offset = path, 0.0  # strip_leading_silence(path, tmp_dir)
+            # On retry 3+, fall back to WAV — fish-audio sometimes 503s on MP3
+            if attempt >= 3:
+                wav = os.path.join(tmp_dir, "wav_" + os.path.basename(path).replace(".mp3", ".wav"))
+                if not os.path.exists(wav):
+                    subprocess.run(
+                        ["ffmpeg", "-y", "-i", path, "-ac", "1", "-ar", str(SAMPLE_RATE), wav],
+                        capture_output=True, check=True,
+                    )
+                audio_path = wav
+            mime = "audio/wav" if audio_path.endswith(".wav") else "audio/mpeg"
             with open(audio_path, "rb") as f:
                 r = requests.post(
                     STT_API,
                     headers={"Authorization": f"Bearer {KEY}"},
-                    files={"file": (os.path.basename(audio_path), f, "audio/mpeg")},
+                    files={"file": (os.path.basename(audio_path), f, mime)},
                     data={
                         "model": STT_MODEL,
                         "response_format": "verbose_json",
